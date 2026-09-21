@@ -113,6 +113,19 @@
         </service>
 
         <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <!-- WorkManager is not used. Its default initializer crashes release
+                 builds because R8 removes WorkDatabase_Impl's reflected constructor. -->
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
+
+        <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.files"
             android:exported="false"
