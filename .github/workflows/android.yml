@@ -1,0 +1,137 @@
+name: Android CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: Create a GitHub Release for this build
+        type: boolean
+        default: false
+      release_tag:
+        description: Release tag, for example v1.0.0
+        type: string
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          # v3 still requests the removed "tools" package and fails with
+          # "Failed to find package 'tools'". v4 installs platform-tools only.
+          packages: 'platforms;android-37.0 build-tools;36.0.0 platform-tools'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Reject committed secrets
+        run: |
+          if grep -R --exclude-dir=.git --exclude-dir=build --exclude=google-services.json.example -nE "BEGIN (RSA |OPENSSH |EC )?PRIVATE KEY|AIza[0-9A-Za-z_-]{20,}" . ; then
+            echo "A private key or a real-looking API key was found. Remove it before building."
+            exit 1
+          fi
+          if grep -R --exclude-dir=.git -n "placeholder-not-a-real-key" app/google-services.json >/dev/null; then
+            echo "Building with the placeholder Firebase config. The APK will install, and the app will show setup instructions until google-services.json is replaced."
+          fi
+
+      - name: Install Firebase config from secret
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
+          fi
+
+      - name: Decode release keystore
+        id: signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            echo "path=$RUNNER_TEMP/release.keystore" >> "$GITHUB_OUTPUT"
+          else
+            echo "No KEYSTORE_BASE64 secret. The release APK will be signed with the debug keystore so it can be installed. It is not a Play Store production signature."
+          fi
+
+      - name: Unit tests
+        run: ./gradlew :app:testDebugUnitTest --stacktrace
+
+      - name: Lint
+        run: ./gradlew :app:lintDebug --stacktrace
+
+      - name: Build release APK and bundle
+        env:
+          KEYSTORE_PATH: ${{ steps.signing.outputs.path }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
+          TURN_URL: ${{ secrets.TURN_URL }}
+          TURN_USERNAME: ${{ secrets.TURN_USERNAME }}
+          TURN_PASSWORD: ${{ secrets.TURN_PASSWORD }}
+        run: ./gradlew :app:assembleRelease :app:bundleRelease --stacktrace
+
+      - name: Package artifacts
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/release/*.apk dist/
+          cp app/build/outputs/bundle/release/*.aab dist/ || true
+          cp README.md docs/BUILD.md docs/RELEASE.md docs/FIREBASE.md dist/
+          cd dist
+          zip -r ../BlazeMessenger-release.zip .
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: BlazeMessenger-apk
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
+      - name: Upload App Bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: BlazeMessenger-aab
+          path: app/build/outputs/bundle/release/*.aab
+          if-no-files-found: error
+
+      - name: Upload ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: BlazeMessenger-release-zip
+          path: BlazeMessenger-release.zip
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        if: github.event_name == 'workflow_dispatch' && inputs.create_release == true
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          name: BlazeMessenger ${{ inputs.release_tag }}
+          files: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/bundle/release/*.aab
+            BlazeMessenger-release.zip
+          generate_release_notes: true
+          fail_on_unmatched_files: true

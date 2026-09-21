@@ -1,0 +1,10 @@
+## Copy to local.properties. This file is an example and is safe to commit.
+sdk.dir=/absolute/path/to/Android/Sdk
+GOOGLE_WEB_CLIENT_ID=
+TURN_URL=
+TURN_USERNAME=
+TURN_PASSWORD=
+KEYSTORE_PATH=
+KEYSTORE_PASSWORD=
+KEY_ALIAS=
+KEY_PASSWORD=
