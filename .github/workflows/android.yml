@@ -36,7 +36,11 @@ jobs:
           java-version: 21
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          # v3 still requests the removed "tools" package and fails with
+          # "Failed to find package 'tools'". v4 installs platform-tools only.
+          packages: 'platforms;android-37.0 build-tools;36.0.0 platform-tools'
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
